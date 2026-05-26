@@ -20,20 +20,61 @@ function slugify(text: string): string {
  * Downloads a remote image and saves it locally
  * Returns the final filename
  */
+/**
+ * Downloads a remote image and saves it locally, with retries on rate limits or server errors.
+ * Returns the final filename
+ */
 async function downloadImageFile(
   imageUrl: string,
   targetDir: string,
   baseName: string,
   index: number
 ): Promise<string> {
-  const response = await axios.get(imageUrl, {
-    responseType: 'arraybuffer',
-    timeout: 10000,
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': imageUrl
+  const retries = 3;
+  const initialDelay = 1000;
+  let response: any;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      let referer = imageUrl;
+      try {
+        referer = new URL(imageUrl).origin;
+      } catch {
+        // Fallback if URL parsing fails
+      }
+
+      response = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 15000, // Slightly longer timeout for CDN-resized images
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': referer
+        }
+      });
+      break; // Success!
+    } catch (err: any) {
+      const isAxiosError = axios.isAxiosError(err);
+      const status = isAxiosError ? err.response?.status : null;
+      
+      // Retry on 429 (rate limits) and 5xx (server errors)
+      if (attempt < retries && (status === 429 || (status && status >= 500))) {
+        let waitTime = initialDelay * Math.pow(2, attempt - 1);
+        
+        const retryAfter = isAxiosError ? err.response?.headers['retry-after'] : null;
+        if (retryAfter) {
+          const seconds = parseInt(retryAfter, 10);
+          if (!isNaN(seconds)) {
+            waitTime = seconds * 1000;
+          }
+        }
+        
+        console.warn(`[Image Downloader] CDN returned status ${status} for ${imageUrl}. Attempt ${attempt}/${retries}. Retrying in ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      } else {
+        throw err;
+      }
     }
-  });
+  }
 
   const contentType = response.headers['content-type'];
   let extension = '';
@@ -43,17 +84,20 @@ async function downloadImageFile(
 
   // Fallback if mime type resolution fails
   if (!extension) {
-    const parsedUrl = new URL(imageUrl);
-    const pathname = parsedUrl.pathname;
-    const extMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
-    if (extMatch) {
-      extension = extMatch[1];
-    } else {
-      extension = 'jpg'; // Default fallback
+    try {
+      const parsedUrl = new URL(imageUrl);
+      const pathname = parsedUrl.pathname;
+      const extMatch = pathname.match(/\.([a-zA-Z0-9]+)$/);
+      if (extMatch) {
+        extension = extMatch[1];
+      } else {
+        extension = 'jpg';
+      }
+    } catch {
+      extension = 'jpg';
     }
   }
 
-  // Ensure clean extension
   if (extension === 'jpeg') extension = 'jpg';
 
   const filename = `${baseName}-image-${index}.${extension}`;
