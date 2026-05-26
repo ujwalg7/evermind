@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta property="og:title" content="Simple Mock Article">
+    <meta name="author" content="John Doe">
+    <meta name="date" content="2026-05-26">
+    <meta property="og:image" content="https://example.com/hero.jpg">
+    <title>Simple Mock Article Title</title>
+</head>
+<body>
+    <article>
+        <h1>Simple Mock Article</h1>
+        <p class="author">By John Doe</p>
+        <div class="content">
+            <p>This is the first paragraph of a very interesting mock article designed to test content extraction.</p>
+            <p>Readability should easily identify this main text section because it has high text density and clear markup.</p>
+            <p>To ensure this mock article has a high word count, we are adding several paragraphs of placeholder text. In a production scenario, articles typically contain hundreds of words discussing technical concepts, architecture, or workflow dynamics. A robust capture engine needs to handle this density and format it correctly without introducing noise, advertisement boilerplate, or sidebars. We will verify that our parser maintains paragraphs correctly, keeping the flow of the author's narrative intact.</p>
+            
+            <h2>Test Subheading</h2>
+            <p>Furthermore, when clipping dynamic technical documentation or developer blogs, code blocks are common. The parser must identify pre-formatted text tags and assign the proper programming language class to enable downstream syntax highlighting. Similarly, images are critical visual evidence. Preserving figure tags and image order allows the reader to follow architectural references. This mock document serves as a comprehensive integration test for all of these structure elements.</p>
+            <p>Lastly, we need to verify that blockquotes, absolute hyperlinks, and list items are kept intact. Structured elements carry semantic meaning that shouldn't be lost during conversion to Markdown. By running our custom Turndown rules against this page, we verify that absolute links continue to resolve to their external domains, keeping the raw capture package traceable and highly useful as primary research material.</p>
+            <figure>
+                <img src="https://example.com/diagram.png" alt="Architecture Diagram">
+                <figcaption>Figure 1: Main block architecture</figcaption>
+            </figure>
+            <p>Blockquotes should be preserved:</p>
+            <blockquote>
+                "This is a blockquote that must be formatted correctly in Markdown."
+            </blockquote>
+            <p>And here is a code block:</p>
+            <pre><code class="language-js">const test = () => { console.log('hello'); };</code></pre>
+        </div>
+    </article>
+</body>
+</html>

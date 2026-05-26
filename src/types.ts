@@ -1,7 +1,8 @@
 export interface ImageInfo {
   originalUrl: string;
   localFilename?: string;
-  localPath?: string; // Relative to Vault root or absolute
+  localPath?: string; // Relative to Vault root
+  status: 'downloaded' | 'failed' | 'skipped';
 }
 
 export interface CanonicalNote {
@@ -14,13 +15,18 @@ export interface CanonicalNote {
   headings: string[];
   images: ImageInfo[];
   confidenceScore: number; // 0 to 1 indicating extraction quality
+  captureStatus: 'complete' | 'partial' | 'needs_review';
+  fingerprint: string; // SHA-256 hash of the contentMarkdown
+  tierUsed?: number;
+  extractionError?: string;
 }
 
 export interface Config {
   vaultPath: string; // Path to Obsidian Vault root
+  inboxSubdir: string; // e.g. 'inbox/raw'
   attachmentsSubdir: string; // e.g., 'attachments/evermind'
   exaApiKey?: string;
   geminiApiKey?: string;
   fallbackThreshold: number; // Score below which we fallback (default: 0.6)
-  runLlmSynthesis: boolean; // Whether to run Tier 6 LLM polish by default
+  runLlmSynthesis: boolean; // Whether to run Tier 6 LLM polish (default: false)
 }

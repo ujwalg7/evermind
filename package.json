@@ -2,15 +2,16 @@
   "name": "evermind-scraper",
   "version": "1.0.0",
   "description": "Durable article-to-Obsidian pipeline with multi-tier fallback ladder",
-  "main": "dist/cli.js",
+  "main": "dist/src/cli.js",
   "bin": {
-    "evermind": "./dist/cli.js"
+    "evermind": "./dist/src/cli.js"
   },
   "scripts": {
     "build": "tsc",
     "package": "tsc && npx pkg . --targets node18-macos --public --no-bytecode --output bin/evermind",
     "start": "ts-node src/cli.ts",
-    "cli": "node dist/cli.js"
+    "cli": "node dist/src/cli.js",
+    "test": "tsc && mkdir -p dist/tests/fixtures && cp tests/fixtures/*.html dist/tests/fixtures/ && node --test dist/tests/**/*.test.js"
   },
   "dependencies": {
     "@google/genai": "^0.2.0",

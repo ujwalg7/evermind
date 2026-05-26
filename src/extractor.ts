@@ -4,9 +4,10 @@ import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { chromium } from 'playwright';
 import Exa from 'exa-js';
+import * as crypto from 'crypto';
 import { CanonicalNote, ImageInfo, Config } from './types';
 
-// Configure Turndown for clean Markdown conversion
+// Configure Turndown for clean, structure-faithful Markdown conversion
 const turndownService = new TurndownService({
   headingStyle: 'atx',
   codeBlockStyle: 'fenced',
@@ -14,16 +15,47 @@ const turndownService = new TurndownService({
   bulletListMarker: '-'
 });
 
-// Avoid converting links to relative if we want to preserve source links
+// Rule 1: Keep links absolute
 turndownService.addRule('absoluteLinks', {
   filter: ['a'],
   replacement: (content, node) => {
     const href = (node as HTMLAnchorElement).getAttribute('href');
     if (!href) return content;
-    // Keep link absolute
     return `[${content}](${href})`;
   }
 });
+
+// Rule 2: Handle Figure and Figcaption to preserve image captions
+turndownService.addRule('figure', {
+  filter: 'figure',
+  replacement: (content) => `\n\n${content.trim()}\n\n`
+});
+
+turndownService.addRule('figcaption', {
+  filter: 'figcaption',
+  replacement: (content) => `\n*Caption: ${content.trim()}*\n`
+});
+
+// Rule 3: Preserve code languages inside code blocks
+turndownService.addRule('fencedCodeBlocks', {
+  filter: 'pre',
+  replacement: (content, node) => {
+    const codeElement = (node as HTMLElement).querySelector('code');
+    if (!codeElement) return `\n\n\`\`\`\n${content.trim()}\n\`\`\`\n\n`;
+    const classAttribute = codeElement.getAttribute('class') || '';
+    const langMatch = classAttribute.match(/language-(\S+)/);
+    const language = langMatch ? langMatch[1] : '';
+    const codeText = codeElement.textContent || '';
+    return `\n\n\`\`\`${language}\n${codeText.trim()}\n\`\`\`\n\n`;
+  }
+});
+
+/**
+ * Calculates SHA-256 hash fingerprint of string
+ */
+function calculateFingerprint(text: string): string {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
 
 /**
  * Detects if the extracted text belongs to a paywall, cookie wall, or human validation page.
@@ -98,7 +130,6 @@ function calculateConfidence(title: string, textContent: string, hasMetadata: bo
 function parseMetadata(doc: Document) {
   const meta: { [key: string]: string } = {};
 
-  // 1. Basic meta tags
   const metaTags = doc.querySelectorAll('meta');
   metaTags.forEach(tag => {
     const name = tag.getAttribute('name') || tag.getAttribute('property') || tag.getAttribute('itemprop');
@@ -108,13 +139,11 @@ function parseMetadata(doc: Document) {
     }
   });
 
-  // 2. Extract OpenGraph and standard values
   const title = meta['og:title'] || meta['twitter:title'] || doc.title || '';
   const author = meta['author'] || meta['article:author'] || meta['og:article:author'] || meta['twitter:creator'] || '';
   const publishedDate = meta['article:published_time'] || meta['pubdate'] || meta['date'] || meta['og:article:published_time'] || '';
   const heroImageUrl = meta['og:image'] || meta['twitter:image'] || meta['image'] || '';
 
-  // 3. Try JSON-LD
   let jsonLdAuthor = '';
   let jsonLdDate = '';
   let jsonLdTitle = '';
@@ -124,13 +153,9 @@ function parseMetadata(doc: Document) {
       if (!script.textContent) return;
       try {
         const data = JSON.parse(script.textContent);
-        
-        // Helper to search JSON-LD objects
         const searchJsonLd = (obj: any) => {
           if (!obj || typeof obj !== 'object') return;
-          
           if (obj.headline && !jsonLdTitle) jsonLdTitle = obj.headline;
-          
           if (obj.author) {
             if (typeof obj.author === 'string') {
               jsonLdAuthor = obj.author;
@@ -141,13 +166,10 @@ function parseMetadata(doc: Document) {
             }
           }
           if (obj.datePublished && !jsonLdDate) jsonLdDate = obj.datePublished;
-
-          // Recurse down common nested properties
           if (obj['@graph'] && Array.isArray(obj['@graph'])) {
             obj['@graph'].forEach(searchJsonLd);
           }
         };
-
         searchJsonLd(data);
       } catch {
         // Skip invalid JSON-LD
@@ -179,14 +201,16 @@ function extractImages(doc: Document, contentElement: Element | null, baseUrl: s
       const absoluteUrl = new URL(src, baseUrl).toString();
       if (!seenUrls.has(absoluteUrl)) {
         seenUrls.add(absoluteUrl);
-        images.push({ originalUrl: absoluteUrl });
+        images.push({ 
+          originalUrl: absoluteUrl,
+          status: 'skipped' // Initial state before localization
+        });
       }
     } catch {
       // Ignore invalid URLs
     }
   };
 
-  // 1. Gather all images inside the parsed article content
   if (contentElement) {
     const imgElements = contentElement.querySelectorAll('img');
     imgElements.forEach(img => {
@@ -195,7 +219,6 @@ function extractImages(doc: Document, contentElement: Element | null, baseUrl: s
     });
   }
 
-  // 2. Fallback to all images in the document if content is sparse
   if (images.length === 0) {
     const imgElements = doc.querySelectorAll('img');
     imgElements.forEach(img => {
@@ -208,7 +231,7 @@ function extractImages(doc: Document, contentElement: Element | null, baseUrl: s
 }
 
 /**
- * Extract headings from the content markdown or element
+ * Extract headings from the content elements
  */
 function extractHeadings(contentElement: Element | null): string[] {
   if (!contentElement) return [];
@@ -224,17 +247,14 @@ function extractHeadings(contentElement: Element | null): string[] {
 /**
  * Normalizes HTML string to CanonicalNote
  */
-export function parseHtml(html: string, url: string): CanonicalNote {
+export function parseHtml(html: string, url: string, fallbackThreshold = 0.6): CanonicalNote {
   const dom = new JSDOM(html, { url });
   const doc = dom.window.document;
 
-  // Extract metadata
   const metaData = parseMetadata(doc);
 
-  // Extract main article using Mozilla Readability
-  // We clone the document because Readability mutates the DOM
   const docClone = doc.cloneNode(true) as Document;
-  const reader = new Readability(docClone);
+  const reader = new Readability(docClone, { keepClasses: true });
   const article = reader.parse();
 
   let contentMarkdown = '';
@@ -243,25 +263,23 @@ export function parseHtml(html: string, url: string): CanonicalNote {
   let title = metaData.title || (article ? article.title : '');
   
   if (article && article.content) {
-    // Convert extracted article HTML back to clean Markdown
     contentMarkdown = turndownService.turndown(article.content);
-    
-    // Extract headings from the readability parsed element
     const contentDom = new JSDOM(article.content);
     headings = extractHeadings(contentDom.window.document.body);
     images = extractImages(doc, contentDom.window.document.body, url);
   } else {
-    // Fallback: convert the entire body if readability failed
     contentMarkdown = turndownService.turndown(doc.body.innerHTML);
     headings = extractHeadings(doc.body);
     images = extractImages(doc, doc.body, url);
   }
 
-  // If we have a hero image, make sure it is in our image list
   if (metaData.heroImageUrl) {
     const exists = images.some(img => img.originalUrl === metaData.heroImageUrl);
     if (!exists) {
-      images.unshift({ originalUrl: metaData.heroImageUrl });
+      images.unshift({ 
+        originalUrl: metaData.heroImageUrl,
+        status: 'skipped'
+      });
     }
   }
 
@@ -270,6 +288,9 @@ export function parseHtml(html: string, url: string): CanonicalNote {
     article ? article.textContent : doc.body.textContent || '', 
     metaData.hasMetadata
   );
+
+  const fingerprint = calculateFingerprint(contentMarkdown);
+  const captureStatus = confidenceScore < fallbackThreshold ? 'partial' : 'complete';
 
   return {
     title: title.trim() || 'Untitled Article',
@@ -280,7 +301,9 @@ export function parseHtml(html: string, url: string): CanonicalNote {
     contentMarkdown,
     headings,
     images,
-    confidenceScore
+    confidenceScore,
+    captureStatus,
+    fingerprint
   };
 }
 
@@ -299,14 +322,17 @@ function parseMarkdownMetadata(markdown: string): { images: ImageInfo[]; heading
     }
   }
 
-  const imageRegex = /!\[.*?\]\((.*?)\)/g;
+  const imageRegex = /!\[.*?\]\((https?:\/\/.*?)\)/g;
   let match;
   const seenUrls = new Set<string>();
   while ((match = imageRegex.exec(markdown)) !== null) {
     const src = match[1];
-    if (src && !src.startsWith('data:') && !seenUrls.has(src)) {
+    if (src && !seenUrls.has(src)) {
       seenUrls.add(src);
-      images.push({ originalUrl: src });
+      images.push({ 
+        originalUrl: src,
+        status: 'skipped'
+      });
     }
   }
 
@@ -316,7 +342,7 @@ function parseMarkdownMetadata(markdown: string): { images: ImageInfo[]; heading
 /**
  * Tier 2 - Deterministic HTML parser
  */
-export async function extractTier2(url: string): Promise<CanonicalNote> {
+export async function extractTier2(url: string, threshold = 0.6): Promise<CanonicalNote> {
   const response = await axios.get(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -331,13 +357,13 @@ export async function extractTier2(url: string): Promise<CanonicalNote> {
     throw new Error('Response is not HTML string');
   }
 
-  return parseHtml(html, url);
+  return parseHtml(html, url, threshold);
 }
 
 /**
  * Tier 3 - Rendered DOM parser using Playwright
  */
-export async function extractTier3(url: string): Promise<CanonicalNote> {
+export async function extractTier3(url: string, threshold = 0.6): Promise<CanonicalNote> {
   const browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext({
@@ -346,12 +372,11 @@ export async function extractTier3(url: string): Promise<CanonicalNote> {
     });
     const page = await context.newPage();
     
-    // Navigate and wait for content to settle
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000); // 3 seconds grace for dynamic scripts/lazy load
+    await page.waitForTimeout(3000);
     
     const html = await page.content();
-    return parseHtml(html, url);
+    return parseHtml(html, url, threshold);
   } finally {
     await browser.close();
   }
@@ -373,6 +398,7 @@ export async function extractTier4(url: string, apiKey: string): Promise<Canonic
   const result = response.results[0];
   const markdown = result.text || '';
   const parsed = parseMarkdownMetadata(markdown);
+  const fingerprint = calculateFingerprint(markdown);
 
   return {
     title: result.title || 'Untitled Article',
@@ -382,7 +408,9 @@ export async function extractTier4(url: string, apiKey: string): Promise<Canonic
     contentMarkdown: markdown,
     headings: parsed.headings,
     images: parsed.images,
-    confidenceScore: 0.9 // High confidence because Exa handles content cleaning well
+    confidenceScore: 0.9,
+    captureStatus: 'complete',
+    fingerprint
   };
 }
 
@@ -395,27 +423,29 @@ export async function runExtractionPipeline(url: string, config: Config): Promis
   // --- Tier 2: Deterministic HTML ---
   try {
     console.log('[Pipeline] Tier 2: Attempting raw HTML deterministic parsing...');
-    const note = await extractTier2(url);
+    const note = await extractTier2(url, config.fallbackThreshold);
     console.log(`[Pipeline] Tier 2 confidence score: ${note.confidenceScore.toFixed(2)}`);
-    if (note.confidenceScore >= config.fallbackThreshold) {
-      return { note, tierUsed: 2 };
+    if (note.confidenceScore >= config.fallbackThreshold && note.captureStatus !== 'partial') {
+      return { note: { ...note, tierUsed: 2 }, tierUsed: 2 };
     }
-    console.log(`[Pipeline] Confidence score below threshold (${config.fallbackThreshold}). Escalating to Tier 3.`);
+    console.log(`[Pipeline] Tier 2 confidence below threshold (${config.fallbackThreshold}). Escalating to Tier 3.`);
   } catch (err: any) {
     console.warn(`[Pipeline] Tier 2 extraction failed: ${err.message}. Escalating to Tier 3.`);
   }
 
   // --- Tier 3: Playwright Rendered DOM ---
   let tier3Note: CanonicalNote | null = null;
+  let tier3Error: string | undefined;
   try {
     console.log('[Pipeline] Tier 3: Rendering page with Playwright...');
-    tier3Note = await extractTier3(url);
+    tier3Note = await extractTier3(url, config.fallbackThreshold);
     console.log(`[Pipeline] Tier 3 confidence score: ${tier3Note.confidenceScore.toFixed(2)}`);
-    if (tier3Note.confidenceScore >= config.fallbackThreshold) {
-      return { note: tier3Note, tierUsed: 3 };
+    if (tier3Note.confidenceScore >= config.fallbackThreshold && tier3Note.captureStatus !== 'partial') {
+      return { note: { ...tier3Note, tierUsed: 3 }, tierUsed: 3 };
     }
-    console.log(`[Pipeline] Tier 3 confidence score below threshold. Escalating to Tier 4.`);
+    console.log(`[Pipeline] Tier 3 confidence below threshold. Escalating to Tier 4.`);
   } catch (err: any) {
+    tier3Error = err.message;
     console.warn(`[Pipeline] Tier 3 extraction failed: ${err.message}. Escalating to Tier 4.`);
   }
 
@@ -424,18 +454,38 @@ export async function runExtractionPipeline(url: string, config: Config): Promis
     try {
       console.log('[Pipeline] Tier 4: Querying Exa Contents API...');
       const note = await extractTier4(url, config.exaApiKey);
-      return { note, tierUsed: 4 };
+      return { note: { ...note, tierUsed: 4 }, tierUsed: 4 };
     } catch (err: any) {
       console.error(`[Pipeline] Tier 4 extraction failed: ${err.message}`);
+      if (tier3Note) {
+        // Exa failed, but we have a Tier 3 note (even if low confidence)
+        return { 
+          note: { 
+            ...tier3Note, 
+            tierUsed: 3, 
+            captureStatus: 'partial',
+            extractionError: `Tier 4 Exa failed: ${err.message}. Tier 3 Playwright was low confidence.`
+          }, 
+          tierUsed: 3 
+        };
+      }
     }
   } else {
     console.warn('[Pipeline] Exa API key missing. Skipping Tier 4 fallback.');
   }
 
-  // Return the best attempt we have
+  // Return the best attempt we have, but explicitly marked as partial/needs_review
   if (tier3Note) {
-    console.log('[Pipeline] Fallback ladder completed. Returning Tier 3 result.');
-    return { note: tier3Note, tierUsed: 3 };
+    console.log('[Pipeline] Fallback ladder completed. Returning Tier 3 result (partial/needs_review).');
+    return { 
+      note: { 
+        ...tier3Note, 
+        tierUsed: 3, 
+        captureStatus: 'partial',
+        extractionError: 'Escalated through all tiers. Playwright result was low confidence.'
+      }, 
+      tierUsed: 3 
+    };
   }
 
   throw new Error('All stages of the extraction ladder failed.');

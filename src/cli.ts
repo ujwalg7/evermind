@@ -14,28 +14,32 @@ const program = new Command();
 
 program
   .name('evermind')
-  .description('Durable article-to-Obsidian pipeline with fallback ladder')
+  .description('Durable article-to-Obsidian capture engine with fallback ladder')
   .version('1.0.0');
 
 program
   .command('clip')
-  .description('Clip an article URL into Obsidian via the extraction fallback ladder')
+  .description('Clip an article URL into your Obsidian inbox via the fallback ladder')
   .argument('<url>', 'URL of the article to clip')
   .option('-v, --vault <path>', 'Override target Obsidian vault path')
-  .option('-a, --attachments <subdir>', 'Override attachments subdirectory')
+  .option('-i, --inbox <subdir>', 'Override target inbox subdirectory (default: inbox/raw)')
+  .option('-a, --attachments <subdir>', 'Override attachments subdirectory (default: attachments/evermind)')
   .option('-t, --tier <number>', 'Force a specific extraction tier (2: Raw HTML, 3: Playwright, 4: Exa)')
-  .option('--no-llm', 'Skip final LLM summary/takeaway synthesis')
+  .option('--llm', 'Enable final Gemini LLM summary/takeaway synthesis (default: disabled)')
   .action(async (url, options) => {
     try {
       const config = loadConfig();
 
       // CLI overrides
       if (options.vault) config.vaultPath = options.vault;
+      if (options.inbox) config.inboxSubdir = options.inbox;
       if (options.attachments) config.attachmentsSubdir = options.attachments;
-      if (options.llm === false) config.runLlmSynthesis = false;
+      // Default in config is false, enable if user explicitly requests --llm
+      if (options.llm) config.runLlmSynthesis = true;
 
       console.log('--- Evermind Clip Start ---');
       console.log(`Vault Path: ${config.vaultPath}`);
+      console.log(`Inbox Directory: ${config.inboxSubdir}`);
       console.log(`Attachments Subdir: ${config.attachmentsSubdir}`);
 
       let note: CanonicalNote;
@@ -46,10 +50,10 @@ program
         const tier = parseInt(options.tier);
         console.log(`[CLI] Forcing Tier ${tier} extraction...`);
         if (tier === 2) {
-          note = await extractTier2(url);
+          note = await extractTier2(url, config.fallbackThreshold);
           tierUsed = 2;
         } else if (tier === 3) {
-          note = await extractTier3(url);
+          note = await extractTier3(url, config.fallbackThreshold);
           tierUsed = 3;
         } else if (tier === 4) {
           if (!config.exaApiKey) throw new Error('Exa API key is required for Tier 4');
@@ -58,28 +62,27 @@ program
         } else {
           throw new Error(`Invalid tier forced: ${options.tier}`);
         }
+        note.tierUsed = tierUsed;
       } else {
         const result = await runExtractionPipeline(url, config);
         note = result.note;
         tierUsed = result.tierUsed;
       }
 
-      console.log(`[CLI] Content successfully extracted (Tier ${tierUsed}). Confidence: ${note.confidenceScore.toFixed(2)}`);
+      console.log(`[CLI] Content extracted (Tier ${tierUsed}). Confidence: ${note.confidenceScore.toFixed(2)}, Status: ${note.captureStatus}`);
 
       // Localize Images
       note = await localizeImages(note, config.vaultPath, config.attachmentsSubdir);
 
-      // LLM Polish
+      // Optional LLM Polish (default is disabled)
       if (config.runLlmSynthesis && config.geminiApiKey) {
         note = await synthesizeNote(note, config.geminiApiKey);
       } else if (config.runLlmSynthesis && !config.geminiApiKey) {
-        console.warn('[CLI] Gemini API key not found. Skipping LLM polish.');
-      } else {
-        console.log('[CLI] LLM synthesis disabled. Skipping.');
+        console.warn('[CLI] Gemini API key not found. Skipping requested LLM polish.');
       }
 
-      // Write to vault
-      const finalPath = await writeNoteToVault(note, config.vaultPath);
+      // Write to vault inbox
+      const finalPath = await writeNoteToVault(note, config.vaultPath, config.inboxSubdir);
       console.log(`[CLI] Clipped successfully. Saved to: ${finalPath}`);
       console.log('--- Evermind Clip Complete ---');
     } catch (err: any) {
@@ -92,16 +95,18 @@ program
   .command('clip-tabs')
   .description('Clip all open tabs in Google Chrome (macOS only)')
   .option('-v, --vault <path>', 'Override target Obsidian vault path')
+  .option('-i, --inbox <subdir>', 'Override target inbox subdirectory (default: inbox/raw)')
   .option('-a, --attachments <subdir>', 'Override attachments subdirectory')
-  .option('--no-llm', 'Skip final LLM summary/takeaway synthesis')
+  .option('--llm', 'Enable final Gemini LLM summary/takeaway synthesis (default: disabled)')
   .option('-d, --domain-filter <domains>', 'Comma-separated domains to match (e.g. infoworld.com,medium.com)')
   .action(async (options) => {
     try {
       const config = loadConfig();
 
       if (options.vault) config.vaultPath = options.vault;
+      if (options.inbox) config.inboxSubdir = options.inbox;
       if (options.attachments) config.attachmentsSubdir = options.attachments;
-      if (options.llm === false) config.runLlmSynthesis = false;
+      if (options.llm) config.runLlmSynthesis = true;
 
       console.log('--- Evermind Ingest Chrome Tabs Start ---');
       const tabs = await getChromeTabs();
@@ -136,13 +141,13 @@ program
           // 2. Localize Images
           note = await localizeImages(note, config.vaultPath, config.attachmentsSubdir);
           
-          // 3. LLM Polish
+          // 3. Optional LLM Polish
           if (config.runLlmSynthesis && config.geminiApiKey) {
             note = await synthesizeNote(note, config.geminiApiKey);
           }
           
           // 4. Write
-          await writeNoteToVault(note, config.vaultPath);
+          await writeNoteToVault(note, config.vaultPath, config.inboxSubdir);
           successCount++;
         } catch (err: any) {
           console.error(`[Batch Error] Failed to process tab "${tab.title}": ${err.message}`);
@@ -218,4 +223,3 @@ program
 
 // Execute the command parser
 program.parse(process.argv);
-

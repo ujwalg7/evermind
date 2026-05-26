@@ -11,32 +11,92 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
- * Format CanonicalNote into Obsidian markdown with frontmatter YAML
+ * Helper to parse YAML frontmatter and Markdown content from a note file
+ */
+function parseFrontmatterAndContent(fileContent: string): { frontmatter: any; contentMarkdown: string } {
+  const match = fileContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (!match) {
+    return { frontmatter: {}, contentMarkdown: fileContent };
+  }
+  
+  const yamlText = match[1];
+  const contentMarkdown = match[2];
+  const frontmatter: any = {};
+  
+  const lines = yamlText.split('\n');
+  let currentKey = '';
+  
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    // Simple YAML parser line check
+    if (line.startsWith(' ') || line.startsWith('-')) {
+      // Ignored nested structures for simple lookup
+      continue;
+    }
+    const colonIndex = line.indexOf(':');
+    if (colonIndex > 0) {
+      const key = line.substring(0, colonIndex).trim();
+      let val = line.substring(colonIndex + 1).trim();
+      if (val.startsWith('"') && val.endsWith('"')) {
+        val = val.substring(1, val.length - 1);
+      }
+      frontmatter[key] = val;
+    }
+  }
+  
+  return { frontmatter, contentMarkdown };
+}
+
+/**
+ * Format CanonicalNote into Obsidian markdown with strict capture provenance YAML
  */
 export function formatNoteMarkdown(note: CanonicalNote & { synthesis?: any }): string {
   const frontmatter: string[] = ['---'];
   frontmatter.push(`title: "${note.title.replace(/"/g, '\\"')}"`);
-  frontmatter.push(`url: "${note.sourceUrl}"`);
+  frontmatter.push(`source: "${note.sourceUrl}"`);
   if (note.author) frontmatter.push(`author: "${note.author.replace(/"/g, '\\"')}"`);
   if (note.publishedDate) frontmatter.push(`published: "${note.publishedDate}"`);
-  frontmatter.push(`clipped: "${new Date().toISOString()}"`);
   
-  const tags = new Set<string>();
-  tags.add('clipped-article');
-  if (note.synthesis?.tags) {
-    note.synthesis.tags.forEach((t: string) => tags.add(t));
-  }
-  if (tags.size > 0) {
-    frontmatter.push(`tags:\n${Array.from(tags).map(t => `  - ${t}`).join('\n')}`);
-  }
+  const now = new Date().toISOString();
+  frontmatter.push(`captured_at: "${now}"`);
+  frontmatter.push(`extraction_tier: ${note.tierUsed || 2}`);
+  frontmatter.push(`confidence: ${note.confidenceScore.toFixed(2)}`);
+  frontmatter.push(`capture_status: "${note.captureStatus}"`);
+  frontmatter.push(`fingerprint: "${note.fingerprint}"`);
   
+  if (note.extractionError) {
+    frontmatter.push(`extraction_error: "${note.extractionError.replace(/"/g, '\\"')}"`);
+  }
+
+  if (note.images.length > 0) {
+    frontmatter.push('images:');
+    note.images.forEach(img => {
+      frontmatter.push(`  - url: "${img.originalUrl}"`);
+      if (img.localPath) {
+        frontmatter.push(`    path: "${img.localPath}"`);
+      }
+      frontmatter.push(`    status: "${img.status}"`);
+    });
+  }
+
+  // LLM Synthesis fields (only appended if synthesis is explicitly present)
   if (note.synthesis?.whyItMatters) {
     frontmatter.push(`why_it_matters: "${note.synthesis.whyItMatters.replace(/"/g, '\\"')}"`);
+  }
+  if (note.synthesis?.tags && note.synthesis.tags.length > 0) {
+    frontmatter.push(`tags:\n${note.synthesis.tags.map((t: string) => `  - ${t}`).join('\n')}`);
   }
   
   frontmatter.push('---');
   
   let markdown = frontmatter.join('\n') + '\n\n';
+
+  // For partial captures, prepend a prominent warning callout
+  if (note.captureStatus === 'partial') {
+    markdown += `> [!WARNING] Partial Capture\n`;
+    markdown += `> The content extraction confidence score was low (${note.confidenceScore.toFixed(2)}).\n`;
+    markdown += `> The page might be truncated, paywalled, or failed to render. Please review the source URL.\n\n`;
+  }
   
   if (note.heroImageUrl) {
     markdown += `![Hero Image](${note.heroImageUrl})\n\n`;
@@ -58,14 +118,20 @@ export function formatNoteMarkdown(note: CanonicalNote & { synthesis?: any }): s
 }
 
 /**
- * Writes a note to the Obsidian vault
+ * Writes a note to the Obsidian vault's inbox/raw directory
  */
 export async function writeNoteToVault(
   note: CanonicalNote & { synthesis?: any },
-  vaultPath: string
+  vaultPath: string,
+  inboxSubdir = 'inbox/raw'
 ): Promise<string> {
+  const targetDir = path.join(vaultPath, inboxSubdir);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+
   const filename = `${sanitizeFilename(note.title)}.md`;
-  const filePath = path.join(vaultPath, filename);
+  const filePath = path.join(targetDir, filename);
 
   const markdown = formatNoteMarkdown(note);
   await fs.promises.writeFile(filePath, markdown, 'utf-8');
@@ -84,7 +150,6 @@ function getMarkdownFiles(dir: string, baseDir: string, ignoreSubdirs: string[])
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
     
-    // Ignore dotfiles, node_modules, and configured subdirectories (e.g. attachments)
     if (file.startsWith('.') || file === 'node_modules') {
       return;
     }
@@ -105,7 +170,7 @@ function getMarkdownFiles(dir: string, baseDir: string, ignoreSubdirs: string[])
 }
 
 /**
- * Scan vault markdown files, localize any external images
+ * Scan vault markdown files, localize any external images and update frontmatter
  */
 export async function postProcessVault(vaultPath: string, attachmentsSubdir: string): Promise<void> {
   console.log(`[Post-Processor] Scanning vault for external images at: ${vaultPath}`);
@@ -114,56 +179,76 @@ export async function postProcessVault(vaultPath: string, attachmentsSubdir: str
     throw new Error(`Vault path does not exist: ${vaultPath}`);
   }
 
-  // Gather markdown files, ignoring the attachments subdirectory
+  // Gather markdown files, ignoring the attachments folder
   const mdFiles = getMarkdownFiles(vaultPath, vaultPath, [attachmentsSubdir]);
   console.log(`[Post-Processor] Found ${mdFiles.length} notes in vault to check.`);
 
   let updatedCount = 0;
 
   for (const filePath of mdFiles) {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const rawContent = fs.readFileSync(filePath, 'utf-8');
     
-    // Quick regex check for external images
-    const hasExternalImages = /!\[.*?\]\((https?:\/\/.*?)\)/.test(content) || /src=["'](https?:\/\/.*?)["']/.test(content);
+    // Quick check for external images
+    const hasExternalImages = /!\[.*?\]\((https?:\/\/.*?)\)/.test(rawContent) || /src=["'](https?:\/\/.*?)["']/.test(rawContent);
     
     if (hasExternalImages) {
       console.log(`[Post-Processor] Found external images in: ${path.basename(filePath)}`);
       
-      // Parse basic title from markdown file (e.g. first heading or filename)
-      let title = path.basename(filePath, '.md');
-      const titleMatch = content.match(/^#\s+(.+)$/m);
-      if (titleMatch) {
-        title = titleMatch[1].trim();
-      }
+      const { frontmatter, contentMarkdown } = parseFrontmatterAndContent(rawContent);
 
-      // Read external images
-      const images: { originalUrl: string }[] = [];
+      // Parse metadata from frontmatter or filename
+      const title = frontmatter.title || path.basename(filePath, '.md');
+      const sourceUrl = frontmatter.source || '';
+      const author = frontmatter.author || undefined;
+      const publishedDate = frontmatter.published || undefined;
+      const confidenceScore = parseFloat(frontmatter.confidence || '1.0');
+      const captureStatus = frontmatter.capture_status || 'complete';
+      const fingerprint = frontmatter.fingerprint || '';
+      const tierUsed = parseInt(frontmatter.extraction_tier || '2');
+
+      // Extract external images
+      const images: { originalUrl: string; status: 'skipped' }[] = [];
       const imageRegex = /!\[.*?\]\((https?:\/\/.*?)\)/g;
       let match;
-      while ((match = imageRegex.exec(content)) !== null) {
-        if (match[1]) images.push({ originalUrl: match[1] });
+      const seenUrls = new Set<string>();
+      
+      while ((match = imageRegex.exec(contentMarkdown)) !== null) {
+        if (match[1] && !seenUrls.has(match[1])) {
+          seenUrls.add(match[1]);
+          images.push({ originalUrl: match[1], status: 'skipped' });
+        }
       }
 
       const htmlImageRegex = /src=["'](https?:\/\/.*?)["']/g;
-      while ((match = htmlImageRegex.exec(content)) !== null) {
-        if (match[1]) images.push({ originalUrl: match[1] });
+      while ((match = htmlImageRegex.exec(contentMarkdown)) !== null) {
+        if (match[1] && !seenUrls.has(match[1])) {
+          seenUrls.add(match[1]);
+          images.push({ originalUrl: match[1], status: 'skipped' });
+        }
       }
 
       if (images.length === 0) continue;
 
-      // Construct dummy CanonicalNote to reuse localizeImages pipeline
-      const dummyNote: CanonicalNote = {
+      const parsedNote: CanonicalNote = {
         title,
-        sourceUrl: '', // unknown
-        contentMarkdown: content,
+        sourceUrl,
+        contentMarkdown,
         images,
         headings: [],
-        confidenceScore: 1.0
+        confidenceScore,
+        captureStatus,
+        fingerprint,
+        tierUsed
       };
 
       try {
-        const localized = await localizeImages(dummyNote, vaultPath, attachmentsSubdir);
-        fs.writeFileSync(filePath, localized.contentMarkdown, 'utf-8');
+        // Run localization
+        const localized = await localizeImages(parsedNote, vaultPath, attachmentsSubdir);
+        
+        // Re-format note with updated image paths and status
+        const updatedMarkdown = formatNoteMarkdown(localized);
+        
+        fs.writeFileSync(filePath, updatedMarkdown, 'utf-8');
         console.log(`[Post-Processor] Updated note: ${path.basename(filePath)}`);
         updatedCount++;
       } catch (err: any) {

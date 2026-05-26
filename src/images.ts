@@ -1,7 +1,6 @@
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import mime from 'mime-types';
 import { CanonicalNote, ImageInfo } from './types';
 
@@ -84,7 +83,7 @@ export async function localizeImages(
   let updatedMarkdown = note.contentMarkdown;
   let updatedHeroImageUrl = note.heroImageUrl;
 
-  console.log(`[Image Localization] Found ${note.images.length} images to process...`);
+  console.log(`[Image Localization] Found ${note.images.length} images in metadata to process...`);
 
   for (let i = 0; i < note.images.length; i++) {
     const img = note.images[i];
@@ -100,18 +99,16 @@ export async function localizeImages(
       updatedImages.push({
         originalUrl,
         localFilename: filename,
-        localPath: localRelativePath
+        localPath: localRelativePath,
+        status: 'downloaded'
       });
 
       // Rewrite markdown image syntax: ![alt](originalUrl) -> ![alt](localRelativePath)
-      // Escaping URL for regex
       const escapedUrl = originalUrl.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-      
-      // Pattern for markdown: ![Description](url) or ![alt](url "title")
       const markdownPattern = new RegExp(`!\\[(.*?)\\]\\(${escapedUrl}(?:\\s+".*?")?\\)`, 'g');
       updatedMarkdown = updatedMarkdown.replace(markdownPattern, `![$1](${localRelativePath})`);
 
-      // Also rewrite standard image HTML or direct links if they exist
+      // Also rewrite standard image HTML if it exists
       const htmlPattern = new RegExp(`src=["']${escapedUrl}["']`, 'g');
       updatedMarkdown = updatedMarkdown.replace(htmlPattern, `src="${localRelativePath}"`);
 
@@ -121,12 +118,16 @@ export async function localizeImages(
       }
     } catch (err: any) {
       console.warn(`[Image Localization] Failed to localize image ${originalUrl}: ${err.message}`);
-      // Maintain the original remote reference
-      updatedImages.push(img);
+      // Maintain the original remote reference, mark as failed
+      updatedImages.push({
+        originalUrl,
+        status: 'failed'
+      });
+      // The markdown remains untouched (still references original remote URL)
     }
   }
 
-  // Scan note for any remaining image patterns that might not be in our metadata but are remote
+  // Scan note for any remaining image patterns that might not be in our metadata
   const remainingImages = updatedMarkdown.match(/!\[.*?\]\((https?:\/\/.*?)\)/g);
   if (remainingImages) {
     console.log(`[Image Localization] Scanning remaining inline remote images in markdown...`);
@@ -145,7 +146,8 @@ export async function localizeImages(
           updatedImages.push({
             originalUrl,
             localFilename: filename,
-            localPath: localRelativePath
+            localPath: localRelativePath,
+            status: 'downloaded'
           });
 
           const escapedUrl = originalUrl.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -157,6 +159,10 @@ export async function localizeImages(
           }
         } catch (err: any) {
           console.warn(`[Image Localization] Failed to localize leftover image ${originalUrl}: ${err.message}`);
+          updatedImages.push({
+            originalUrl,
+            status: 'failed'
+          });
         }
       }
     }

@@ -7,17 +7,17 @@ import { Config } from './types';
 dotenv.config();
 
 const DEFAULT_VAULT_PATH = process.env.OBSIDIAN_VAULT_PATH || '';
+const DEFAULT_INBOX_SUBDIR = process.env.EVERMIND_INBOX_SUBDIR || 'inbox/raw';
 const DEFAULT_ATTACHMENTS_SUBDIR = process.env.EVERMIND_ATTACHMENTS_SUBDIR || 'attachments/evermind';
 const DEFAULT_THRESHOLD = parseFloat(process.env.EVERMIND_THRESHOLD || '0.6');
+// Default to false unless explicitly set to 'true'
 const DEFAULT_RUN_LLM = process.env.EVERMIND_LLM_SYNTHESIS === 'true';
 
 export function loadConfig(): Config {
   let vaultPath = DEFAULT_VAULT_PATH;
   
-  // If not set, let's try to search user's home directory or check current working dir
   if (!vaultPath) {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    // Look for a test vault or default location if it exists
     const potentialPaths = [
       path.join(homeDir, 'Documents', 'Obsidian Vault'),
       path.join(homeDir, 'Obsidian'),
@@ -31,13 +31,13 @@ export function loadConfig(): Config {
     }
   }
 
-  // Fallback to current working directory if all else fails
   if (!vaultPath) {
     vaultPath = process.cwd();
   }
 
   return {
     vaultPath: path.resolve(vaultPath),
+    inboxSubdir: DEFAULT_INBOX_SUBDIR,
     attachmentsSubdir: DEFAULT_ATTACHMENTS_SUBDIR,
     exaApiKey: process.env.EXA_API_KEY,
     geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
