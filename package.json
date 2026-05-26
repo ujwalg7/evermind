@@ -1,0 +1,43 @@
+{
+  "name": "evermind-scraper",
+  "version": "1.0.0",
+  "description": "Durable article-to-Obsidian pipeline with multi-tier fallback ladder",
+  "main": "dist/cli.js",
+  "bin": {
+    "evermind": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "package": "tsc && npx pkg . --targets node18-macos --public --no-bytecode --output bin/evermind",
+    "start": "ts-node src/cli.ts",
+    "cli": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@google/genai": "^0.2.0",
+    "@mozilla/readability": "^0.5.0",
+    "axios": "^1.7.9",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "exa-js": "^1.1.2",
+    "jsdom": "^24.1.0",
+    "mime-types": "^2.1.35",
+    "playwright": "^1.44.0",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/mime-types": "^2.1.4",
+    "@types/mozilla__readability": "^0.4.2",
+    "@types/node": "^20.14.2",
+    "@types/turndown": "^5.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "esbuild": "^0.21.3",
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/browsers.json"
+    ]
+  }
+}
