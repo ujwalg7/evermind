@@ -3,7 +3,6 @@ import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { chromium } from 'playwright';
-import Exa from 'exa-js';
 import * as crypto from 'crypto';
 import { CanonicalNote, ImageInfo, Config } from './types';
 
@@ -203,7 +202,7 @@ function extractImages(doc: Document, contentElement: Element | null, baseUrl: s
         seenUrls.add(absoluteUrl);
         images.push({ 
           originalUrl: absoluteUrl,
-          status: 'skipped' // Initial state before localization
+          status: 'skipped'
         });
       }
     } catch {
@@ -308,9 +307,9 @@ export function parseHtml(html: string, url: string, fallbackThreshold = 0.6): C
 }
 
 /**
- * Helper to parse headings and images from raw markdown (useful for Exa fallback)
+ * Helper to parse headings and images from raw markdown (useful for fallbacks)
  */
-function parseMarkdownMetadata(markdown: string): { images: ImageInfo[]; headings: string[] } {
+export function parseMarkdownMetadata(markdown: string): { images: ImageInfo[]; headings: string[] } {
   const headings: string[] = [];
   const images: ImageInfo[] = [];
   
@@ -383,32 +382,34 @@ export async function extractTier3(url: string, threshold = 0.6): Promise<Canoni
 }
 
 /**
- * Tier 4 - Exa Contents API fallback
+ * Tier 4 - Free Jina Reader API fallback (returns clean Markdown + Metadata via JSON)
  */
-export async function extractTier4(url: string, apiKey: string): Promise<CanonicalNote> {
-  const exa = new Exa(apiKey);
-  const response = await exa.getContents([url], {
-    text: true
+export async function extractTier4(url: string): Promise<CanonicalNote> {
+  const response = await axios.get(`https://r.jina.ai/${url}`, {
+    headers: {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    },
+    timeout: 20000
   });
 
-  if (!response.results || response.results.length === 0) {
-    throw new Error('Exa returned no results for URL: ' + url);
+  const resData = response.data;
+  if (!resData || !resData.data) {
+    throw new Error('Jina Reader API returned invalid format');
   }
 
-  const result = response.results[0];
-  const markdown = result.text || '';
+  const { title, content } = resData.data;
+  const markdown = content || '';
   const parsed = parseMarkdownMetadata(markdown);
   const fingerprint = calculateFingerprint(markdown);
 
   return {
-    title: result.title || 'Untitled Article',
+    title: title || 'Untitled Article',
     sourceUrl: url,
-    author: result.author || undefined,
-    publishedDate: result.publishedDate || undefined,
     contentMarkdown: markdown,
     headings: parsed.headings,
     images: parsed.images,
-    confidenceScore: 0.9,
+    confidenceScore: 0.95, // Jina is highly reliable
     captureStatus: 'complete',
     fingerprint
   };
@@ -435,51 +436,48 @@ export async function runExtractionPipeline(url: string, config: Config): Promis
 
   // --- Tier 3: Playwright Rendered DOM ---
   let tier3Note: CanonicalNote | null = null;
-  let tier3Error: string | undefined;
   try {
     console.log('[Pipeline] Tier 3: Rendering page with Playwright...');
     tier3Note = await extractTier3(url, config.fallbackThreshold);
     console.log(`[Pipeline] Tier 3 confidence score: ${tier3Note.confidenceScore.toFixed(2)}`);
-    if (tier3Note.confidenceScore >= config.fallbackThreshold && tier3Note.captureStatus !== 'partial') {
+    if (tier3Note && tier3Note.confidenceScore >= config.fallbackThreshold && tier3Note.captureStatus !== 'partial') {
       return { note: { ...tier3Note, tierUsed: 3 }, tierUsed: 3 };
     }
     console.log(`[Pipeline] Tier 3 confidence below threshold. Escalating to Tier 4.`);
   } catch (err: any) {
-    tier3Error = err.message;
     console.warn(`[Pipeline] Tier 3 extraction failed: ${err.message}. Escalating to Tier 4.`);
   }
 
-  // --- Tier 4: Exa Contents API ---
-  if (config.exaApiKey) {
-    try {
-      console.log('[Pipeline] Tier 4: Querying Exa Contents API...');
-      const note = await extractTier4(url, config.exaApiKey);
-      return { note: { ...note, tierUsed: 4 }, tierUsed: 4 };
-    } catch (err: any) {
-      console.error(`[Pipeline] Tier 4 extraction failed: ${err.message}`);
-      if (tier3Note) {
-        // Exa failed, but we have a Tier 3 note (even if low confidence)
-        return { 
-          note: { 
-            ...tier3Note, 
-            tierUsed: 3, 
-            captureStatus: 'partial',
-            extractionError: `Tier 4 Exa failed: ${err.message}. Tier 3 Playwright was low confidence.`
-          }, 
-          tierUsed: 3 
-        };
-      }
+  // --- Tier 4: Jina Reader API (100% Free Fallback) ---
+  try {
+    console.log('[Pipeline] Tier 4: Querying Jina Reader proxy (Free Fallback)...');
+    const note = await extractTier4(url);
+    return { note: { ...note, tierUsed: 4 }, tierUsed: 4 };
+  } catch (err: any) {
+    console.error(`[Pipeline] Tier 4 extraction failed: ${err.message}`);
+    
+    // If Jina failed but we have a Playwright note, return it as partial fallback
+    if (tier3Note) {
+      const noteToReturn = tier3Note as CanonicalNote;
+      return { 
+        note: { 
+          ...noteToReturn, 
+          tierUsed: 3, 
+          captureStatus: 'partial',
+          extractionError: `Tier 4 Jina failed: ${err.message}. Tier 3 Playwright was low confidence.`
+        }, 
+        tierUsed: 3 
+      };
     }
-  } else {
-    console.warn('[Pipeline] Exa API key missing. Skipping Tier 4 fallback.');
   }
 
   // Return the best attempt we have, but explicitly marked as partial/needs_review
   if (tier3Note) {
     console.log('[Pipeline] Fallback ladder completed. Returning Tier 3 result (partial/needs_review).');
+    const noteToReturn = tier3Note as CanonicalNote;
     return { 
       note: { 
-        ...tier3Note, 
+        ...noteToReturn, 
         tierUsed: 3, 
         captureStatus: 'partial',
         extractionError: 'Escalated through all tiers. Playwright result was low confidence.'

@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseHtml } from '../src/extractor';
+import { parseHtml, extractTier4, parseMarkdownMetadata } from '../src/extractor';
 import { formatNoteMarkdown } from '../src/vault';
 import { localizeImages } from '../src/images';
 import { CanonicalNote } from '../src/types';
+import axios from 'axios';
 
 describe('Article-to-Obsidian Pipeline Tests', () => {
   const fixturesDir = path.join(__dirname, 'fixtures');
@@ -120,5 +121,58 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
     if (fs.existsSync(mockVaultPath)) {
       fs.rmSync(mockVaultPath, { recursive: true, force: true });
     }
+  });
+
+  // Test 5: Jina Reader Parser and Fallback
+  it('should parse Jina Reader JSON response correctly', async () => {
+    const originalGet = axios.get;
+    const mockUrl = 'https://example.com/blog-post';
+    const mockMarkdown = `# My Blog Post\n\nThis is a great article about AI.\n\n![AI Image](https://example.com/ai.png)\n\n## Subheading 1\nSome more text.`;
+    
+    // Stub axios.get
+    axios.get = (async (url: string, config?: any): Promise<any> => {
+      assert.strictEqual(url, `https://r.jina.ai/${mockUrl}`);
+      assert.deepStrictEqual(config?.headers, {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      });
+      return {
+        data: {
+          data: {
+            title: 'My Blog Post',
+            content: mockMarkdown
+          }
+        }
+      };
+    }) as any;
+
+    try {
+      const note = await extractTier4(mockUrl);
+      assert.strictEqual(note.title, 'My Blog Post');
+      assert.strictEqual(note.sourceUrl, mockUrl);
+      assert.strictEqual(note.contentMarkdown, mockMarkdown);
+      assert.deepStrictEqual(note.headings, ['My Blog Post', 'Subheading 1']);
+      assert.deepStrictEqual(note.images, [
+        { originalUrl: 'https://example.com/ai.png', status: 'skipped' }
+      ]);
+      assert.strictEqual(note.confidenceScore, 0.95);
+      assert.strictEqual(note.captureStatus, 'complete');
+      assert.ok(note.fingerprint.length > 0);
+    } finally {
+      // Restore original get
+      axios.get = originalGet;
+    }
+  });
+
+  // Test 6: Markdown Metadata Parser
+  it('should parse markdown headings and images correctly via helper', () => {
+    const markdown = `# H1\n\n## H2\n\n![Image 1](https://example.com/1.jpg)\n![Image 2](https://example.com/2.jpg)`;
+    const parsed = parseMarkdownMetadata(markdown);
+    
+    assert.deepStrictEqual(parsed.headings, ['H1', 'H2']);
+    assert.deepStrictEqual(parsed.images, [
+      { originalUrl: 'https://example.com/1.jpg', status: 'skipped' },
+      { originalUrl: 'https://example.com/2.jpg', status: 'skipped' }
+    ]);
   });
 });

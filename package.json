@@ -19,7 +19,6 @@
     "axios": "^1.7.9",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
-    "exa-js": "^1.1.2",
     "jsdom": "^24.1.0",
     "mime-types": "^2.1.35",
     "playwright": "^1.44.0",
@@ -31,10 +30,10 @@
     "@types/mozilla__readability": "^0.4.2",
     "@types/node": "^20.14.2",
     "@types/turndown": "^5.0.4",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.5",
     "esbuild": "^0.21.3",
-    "pkg": "^5.8.1"
+    "pkg": "^5.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
   },
   "pkg": {
     "assets": [
