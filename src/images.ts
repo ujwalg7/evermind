@@ -30,8 +30,8 @@ async function downloadImageFile(
   baseName: string,
   index: number
 ): Promise<string> {
-  const retries = 3;
-  const initialDelay = 1000;
+  const retries = 4;
+  const initialDelay = 1500;
   let response: any;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -45,9 +45,11 @@ async function downloadImageFile(
 
       response = await axios.get(imageUrl, {
         responseType: 'arraybuffer',
-        timeout: 15000, // Slightly longer timeout for CDN-resized images
+        timeout: 15000, // 15 seconds timeout
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
           'Referer': referer
         }
       });
@@ -55,9 +57,13 @@ async function downloadImageFile(
     } catch (err: any) {
       const isAxiosError = axios.isAxiosError(err);
       const status = isAxiosError ? err.response?.status : null;
+      const code = isAxiosError ? err.code : null;
       
-      // Retry on 429 (rate limits) and 5xx (server errors)
-      if (attempt < retries && (status === 429 || (status && status >= 500))) {
+      const isTimeout = code === 'ECONNABORTED' || code === 'ETIMEDOUT';
+      const isRetryableStatus = status === 429 || (status && status >= 500);
+
+      // Retry on 429 (rate limits), 5xx (server errors), and timeouts
+      if (attempt < retries && (isRetryableStatus || isTimeout)) {
         let waitTime = initialDelay * Math.pow(2, attempt - 1);
         
         const retryAfter = isAxiosError ? err.response?.headers['retry-after'] : null;
@@ -65,10 +71,15 @@ async function downloadImageFile(
           const seconds = parseInt(retryAfter, 10);
           if (!isNaN(seconds)) {
             waitTime = seconds * 1000;
+          } else {
+            const parsedDate = Date.parse(retryAfter);
+            if (!isNaN(parsedDate)) {
+              waitTime = Math.max(0, parsedDate - Date.now());
+            }
           }
         }
         
-        console.warn(`[Image Downloader] CDN returned status ${status} for ${imageUrl}. Attempt ${attempt}/${retries}. Retrying in ${waitTime}ms...`);
+        console.warn(`[Image Downloader] CDN error (status: ${status || 'timeout'}). Attempt ${attempt}/${retries}. Retrying in ${waitTime}ms...`);
         await new Promise(resolve => setTimeout(resolve, waitTime));
       } else {
         throw err;
@@ -133,6 +144,11 @@ export async function localizeImages(
     const img = note.images[i];
     const originalUrl = img.originalUrl;
 
+    // Introduce spacing delay to prevent hitting burst rate limits
+    if (i > 0) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
     try {
       console.log(`[Image Localization] Downloading [${i + 1}/${note.images.length}]: ${originalUrl}`);
       const filename = await downloadImageFile(originalUrl, targetDir, baseName, i + 1);
@@ -167,7 +183,6 @@ export async function localizeImages(
         originalUrl,
         status: 'failed'
       });
-      // The markdown remains untouched (still references original remote URL)
     }
   }
 
@@ -182,6 +197,12 @@ export async function localizeImages(
         if (updatedImages.some(img => img.originalUrl === originalUrl)) {
           continue; // Already processed
         }
+
+        // Introduce spacing delay
+        if (i > 0 || note.images.length > 0) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+
         try {
           const index = note.images.length + i + 1;
           const filename = await downloadImageFile(originalUrl, targetDir, baseName, index);
