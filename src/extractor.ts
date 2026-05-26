@@ -56,6 +56,35 @@ function calculateFingerprint(text: string): string {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
 
+function deriveFallbackTitle(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '');
+    const segments = parsed.pathname
+      .split('/')
+      .map(segment => segment.trim())
+      .filter(Boolean)
+      .map(segment => segment.replace(/[-_]+/g, ' '))
+      .map(segment => segment.replace(/[^\w\s]/g, ''))
+      .filter(Boolean);
+
+    const tail = segments.length > 0 ? segments[segments.length - 1] : '';
+    const head = segments.length > 1 ? segments[segments.length - 2] : '';
+    const candidate = [head, tail].filter(Boolean).join(' ').trim() || tail || host;
+    return candidate ? candidate.replace(/\s+/g, ' ').trim() : 'Captured Article';
+  } catch {
+    return 'Captured Article';
+  }
+}
+
+function normalizeTitle(rawTitle: string, url: string): string {
+  const title = (rawTitle || '').trim();
+  if (!title || /^untitled article$/i.test(title) || /^untitled$/i.test(title)) {
+    return deriveFallbackTitle(url);
+  }
+  return title;
+}
+
 /**
  * Detects if the extracted text belongs to a paywall, cookie wall, or human validation page.
  */
@@ -292,7 +321,7 @@ export function parseHtml(html: string, url: string, fallbackThreshold = 0.6): C
   const captureStatus = confidenceScore < fallbackThreshold ? 'partial' : 'complete';
 
   return {
-    title: title.trim() || 'Untitled Article',
+    title: normalizeTitle(title, url),
     sourceUrl: url,
     author: metaData.author.trim() || undefined,
     publishedDate: metaData.publishedDate.trim() || undefined,
@@ -400,11 +429,14 @@ export async function extractTier4(url: string): Promise<CanonicalNote> {
 
   const { title, content } = resData.data;
   const markdown = content || '';
+  if (!markdown.trim()) {
+    throw new Error('Jina Reader returned empty article content');
+  }
   const parsed = parseMarkdownMetadata(markdown);
   const fingerprint = calculateFingerprint(markdown);
 
   return {
-    title: title || 'Untitled Article',
+    title: normalizeTitle(title, url),
     sourceUrl: url,
     contentMarkdown: markdown,
     headings: parsed.headings,
@@ -437,11 +469,14 @@ export async function extractTier5(url: string, apiKey: string): Promise<Canonic
 
   const result = response.data.results[0];
   const markdown = result.text || '';
+  if (!markdown.trim()) {
+    throw new Error('Exa API returned empty article content');
+  }
   const parsed = parseMarkdownMetadata(markdown);
   const fingerprint = calculateFingerprint(markdown);
 
   return {
-    title: result.title || 'Untitled Article',
+    title: normalizeTitle(result.title, url),
     sourceUrl: url,
     author: result.author || undefined,
     publishedDate: result.publishedDate || undefined,

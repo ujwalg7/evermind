@@ -10,6 +10,53 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '-').trim();
 }
 
+function deriveFallbackFilename(sourceUrl: string, fingerprint: string): string {
+  try {
+    const parsed = new URL(sourceUrl);
+    const host = parsed.hostname.replace(/^www\./, '');
+    const segments = parsed.pathname
+      .split('/')
+      .map(segment => segment.trim())
+      .filter(Boolean)
+      .map(segment => segment.replace(/[-_]+/g, ' '))
+      .map(segment => segment.replace(/[^\w\s]/g, ''))
+      .filter(Boolean);
+
+    const tail = segments.length > 0 ? segments[segments.length - 1] : '';
+    const head = segments.length > 1 ? segments[segments.length - 2] : '';
+    const candidate = [head, tail].filter(Boolean).join(' ').trim() || tail || host;
+    const cleaned = candidate ? sanitizeFilename(candidate).replace(/\s+/g, ' ').trim() : '';
+    if (cleaned) {
+      return cleaned;
+    }
+  } catch {
+    // Fall through to fingerprint-based name.
+  }
+
+  return fingerprint ? `capture-${fingerprint.slice(0, 12)}` : 'capture';
+}
+
+function validateCaptureForWrite(note: CanonicalNote & { synthesis?: any }): void {
+  if (!note.sourceUrl || !note.sourceUrl.trim()) {
+    throw new Error(`Refusing to write capture "${note.title}" because sourceUrl is empty.`);
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(note.sourceUrl);
+  } catch {
+    throw new Error(`Refusing to write capture "${note.title}" because sourceUrl is invalid: ${note.sourceUrl}`);
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error(`Refusing to write capture "${note.title}" because sourceUrl protocol is unsupported: ${note.sourceUrl}`);
+  }
+
+  if (!note.contentMarkdown || !note.contentMarkdown.trim()) {
+    throw new Error(`Refusing to write capture "${note.title}" because contentMarkdown is empty.`);
+  }
+}
+
 /**
  * Helper to parse YAML frontmatter and Markdown content from a note file
  */
@@ -125,12 +172,15 @@ export async function writeNoteToVault(
   vaultPath: string,
   inboxSubdir = 'inbox/raw'
 ): Promise<string> {
+  validateCaptureForWrite(note);
+
   const targetDir = path.join(vaultPath, inboxSubdir);
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const filename = `${sanitizeFilename(note.title)}.md`;
+  const normalizedTitle = sanitizeFilename(note.title) || deriveFallbackFilename(note.sourceUrl, note.fingerprint);
+  const filename = `${normalizedTitle}.md`;
   const filePath = path.join(targetDir, filename);
 
   const markdown = formatNoteMarkdown(note);

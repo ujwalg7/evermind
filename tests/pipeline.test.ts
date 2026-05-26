@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parseHtml, extractTier4, parseMarkdownMetadata, extractTier5, runExtractionPipeline } from '../src/extractor';
-import { formatNoteMarkdown } from '../src/vault';
+import { formatNoteMarkdown, writeNoteToVault } from '../src/vault';
 import { localizeImages } from '../src/images';
 import { CanonicalNote } from '../src/types';
 import axios from 'axios';
@@ -225,6 +225,29 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
     }
   });
 
+  // Test 7b: Empty Tier 4 content should fail closed
+  it('should reject empty Jina Reader captures instead of writing empty notes', async () => {
+    const originalGet = axios.get;
+    const mockUrl = 'https://example.com/empty-jina';
+
+    axios.get = (async (): Promise<any> => {
+      return {
+        data: {
+          data: {
+            title: '',
+            content: ''
+          }
+        }
+      };
+    }) as any;
+
+    try {
+      await assert.rejects(() => extractTier4(mockUrl), /empty article content/i);
+    } finally {
+      axios.get = originalGet;
+    }
+  });
+
   // Test 8: Fallback Escalation to Tier 3
   it('should escalate to Tier 3 when Tier 2 confidence is below threshold', async () => {
     const originalGet = axios.get;
@@ -280,5 +303,42 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
     
     assert.strictEqual(note1.fingerprint, note2.fingerprint);
     assert.ok(note1.fingerprint.length > 0);
+  });
+
+  // Test 10: Vault writer must reject empty-source or empty-body captures
+  it('should refuse to write captures with empty source or empty content', async () => {
+    const vaultPath = path.join(__dirname, 'mock_vault_write_guard');
+
+    await assert.rejects(
+      () => writeNoteToVault({
+        title: 'Untitled Article',
+        sourceUrl: '',
+        contentMarkdown: '',
+        headings: [],
+        images: [],
+        confidenceScore: 0.95,
+        captureStatus: 'complete',
+        fingerprint: 'mockfingerprint'
+      }, vaultPath, 'inbox/raw'),
+      /sourceUrl is empty/i
+    );
+
+    await assert.rejects(
+      () => writeNoteToVault({
+        title: 'Untitled Article',
+        sourceUrl: 'https://example.com/article',
+        contentMarkdown: '   ',
+        headings: [],
+        images: [],
+        confidenceScore: 0.95,
+        captureStatus: 'complete',
+        fingerprint: 'mockfingerprint'
+      }, vaultPath, 'inbox/raw'),
+      /contentMarkdown is empty/i
+    );
+
+    if (fs.existsSync(vaultPath)) {
+      fs.rmSync(vaultPath, { recursive: true, force: true });
+    }
   });
 });

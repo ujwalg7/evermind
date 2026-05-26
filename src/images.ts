@@ -32,6 +32,7 @@ async function downloadImageFile(
 ): Promise<string> {
   const retries = 4;
   const initialDelay = 1500;
+  const maxRetryDelay = 3000;
   let response: any;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -77,6 +78,10 @@ async function downloadImageFile(
               waitTime = Math.max(0, parsedDate - Date.now());
             }
           }
+        }
+
+        if (waitTime > maxRetryDelay) {
+          waitTime = maxRetryDelay;
         }
         
         console.warn(`[Image Downloader] CDN error (status: ${status || 'timeout'}). Attempt ${attempt}/${retries}. Retrying in ${waitTime}ms...`);
