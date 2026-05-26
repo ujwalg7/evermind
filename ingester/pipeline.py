@@ -11,6 +11,7 @@ from .llm import summarize_note_content
 from .models import CuratedNote, QCDecision, RawCapture
 from .qc import classify_capture_quality
 from .reader import discover_raw_notes, read_raw_capture
+from .titles import note_filename
 from .writer import write_curation_note
 
 log = logging.getLogger(__name__)
@@ -23,20 +24,33 @@ def _safe_note_source_url(path: Path, raw_url: str) -> str:
     return f"file://{path}"
 
 
-def _move_to_processed(raw_path: Path, raw_dir: Path, status: str) -> None:
-    status_suffix = "ok" if status == "ok" else "failed"
-    processed_dir = raw_dir.parent / f"processed-{status_suffix}"
-    processed_dir.mkdir(parents=True, exist_ok=True)
+def _archive_target(vault_dir: Path, note: CuratedNote, raw_path: Path, failed: bool = False) -> Path:
+    date_key = note.reviewed_at.split("T")[0]
+    if note.status == "curated" and not failed:
+        bucket = "raw"
+        title = note.title
+    else:
+        bucket = "needs-review"
+        suffix = "Ingest Failed" if failed else "Source"
+        title = f"{note.title} - {suffix}"
 
-    stem = raw_path.stem
-    candidate = processed_dir / f"{stem}{raw_path.suffix}"
+    target_dir = vault_dir / bucket / date_key
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = note_filename(title) or raw_path.stem
+    candidate = target_dir / f"{filename}{raw_path.suffix}"
 
     counter = 1
     while candidate.exists():
-        candidate = processed_dir / f"{stem}-{counter}{raw_path.suffix}"
+        candidate = target_dir / f"{filename} {counter}{raw_path.suffix}"
         counter += 1
 
-    move(str(raw_path), str(candidate))
+    return candidate
+
+
+def _archive_raw(raw_path: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    move(str(raw_path), str(target))
 
 
 def _safe_text(value: Optional[str], fallback: str) -> str:
@@ -85,6 +99,8 @@ def curate_from_raw(
           )
 
           note = _to_curated_note(raw, qc, captured_text, path)
+          archive_path = _archive_target(vault_dir, note, path)
+          note.raw_source = archive_path.relative_to(vault_dir).as_posix()
           if synthesis:
               enrichments = summarize_note_content(note)
               if enrichments:
@@ -97,9 +113,20 @@ def curate_from_raw(
 
           written = write_curation_note(vault_dir, note)
           written_paths.append(written)
-          _move_to_processed(path, raw_dir, "ok")
+          _archive_raw(path, archive_path)
       except Exception as exc:
-          _move_to_processed(path, raw_dir, "failed")
+          now = _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+          fallback_note = CuratedNote(
+              title=path.stem,
+              status="needs-review",
+              confidence="low",
+              temporal_relevance="current",
+              source_url=f"file://{path}",
+              raw_source=path.as_posix(),
+              captured_at=now,
+              reviewed_at=now,
+          )
+          _archive_raw(path, _archive_target(vault_dir, fallback_note, path, failed=True))
           log.warning("Failed to ingest %s: %s", path, exc)
 
   return written_paths

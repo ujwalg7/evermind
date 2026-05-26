@@ -102,6 +102,32 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
     assert.ok(formatted.includes('    status: "failed"'));
   });
 
+  it('should decode HTML entities and strip unsafe characters from raw filenames', async () => {
+    const mockNote: CanonicalNote = {
+      title: '&#8220;The terminal still matters&#8221;: Amp &amp; CLI?',
+      sourceUrl: 'https://example.com/terminal',
+      contentMarkdown: 'Body content.',
+      headings: [],
+      images: [],
+      confidenceScore: 0.9,
+      captureStatus: 'complete',
+      fingerprint: 'sha256-entity-test'
+    };
+
+    const vaultPath = path.join(__dirname, 'mock_vault_titles');
+    try {
+      const written = await writeNoteToVault(mockNote, vaultPath);
+      assert.strictEqual(path.basename(written), "'The terminal still matters' - Amp & CLI.md");
+      const markdown = fs.readFileSync(written, 'utf8');
+      assert.ok(markdown.includes('title: "\'The terminal still matters\': Amp & CLI?"'));
+      assert.ok(markdown.includes("# 'The terminal still matters': Amp & CLI?"));
+    } finally {
+      if (fs.existsSync(vaultPath)) {
+        fs.rmSync(vaultPath, { recursive: true, force: true });
+      }
+    }
+  });
+
   // Test 4: Capture-oriented Image Localization Failure Path
   it('should preserve original image URL in markdown body if downloading fails', async () => {
     const mockNote: CanonicalNote = {

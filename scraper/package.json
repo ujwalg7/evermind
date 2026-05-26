@@ -1,5 +1,5 @@
 {
-  "name": "evermind-scraper",
+  "name": "evermind",
   "version": "1.0.0",
   "description": "Durable article-to-Obsidian pipeline with multi-tier fallback ladder",
   "main": "dist/src/cli.js",

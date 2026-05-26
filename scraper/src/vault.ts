@@ -3,11 +3,43 @@ import * as path from 'path';
 import { CanonicalNote } from './types';
 import { localizeImages } from './images';
 
-/**
- * Replace invalid characters for file paths
- */
+function decodeHtmlEntities(value: string): string {
+  const namedEntities: Record<string, string> = {
+    amp: '&',
+    quot: '"',
+    apos: "'",
+    lt: '<',
+    gt: '>',
+    nbsp: ' '
+  };
+
+  return value
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&([a-zA-Z]+);/g, (match, entity) => namedEntities[entity] ?? match);
+}
+
+function cleanDisplayTitle(name: string): string {
+  return decodeHtmlEntities(name || '')
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, "'")
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function sanitizeFilename(name: string): string {
-  return name.replace(/[\\/:*?"<>|]/g, '-').trim();
+  const cleaned = cleanDisplayTitle(name)
+    .replace(/[\\/:*?"<>|]+/g, ' - ')
+    .replace(/[#[\]{}()!`~$%^=+;,]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[ ._-]+|[ ._-]+$/g, '');
+
+  return cleaned.length > 140 ? cleaned.slice(0, 140).replace(/\s+\S*$/, '').trim() : cleaned;
 }
 
 function deriveFallbackFilename(sourceUrl: string, fingerprint: string): string {
@@ -98,8 +130,9 @@ function parseFrontmatterAndContent(fileContent: string): { frontmatter: any; co
  * Format CanonicalNote into Obsidian markdown with strict capture provenance YAML
  */
 export function formatNoteMarkdown(note: CanonicalNote & { synthesis?: any }): string {
+  const title = cleanDisplayTitle(note.title) || note.title;
   const frontmatter: string[] = ['---'];
-  frontmatter.push(`title: "${note.title.replace(/"/g, '\\"')}"`);
+  frontmatter.push(`title: "${title.replace(/"/g, '\\"')}"`);
   frontmatter.push(`source: "${note.sourceUrl}"`);
   if (note.author) frontmatter.push(`author: "${note.author.replace(/"/g, '\\"')}"`);
   if (note.publishedDate) frontmatter.push(`published: "${note.publishedDate}"`);
@@ -149,7 +182,7 @@ export function formatNoteMarkdown(note: CanonicalNote & { synthesis?: any }): s
     markdown += `![Hero Image](${note.heroImageUrl})\n\n`;
   }
   
-  markdown += `# ${note.title}\n\n`;
+  markdown += `# ${title}\n\n`;
   
   if (note.synthesis?.summary && note.synthesis.summary.length > 0) {
     markdown += `## Key Takeaways\n`;

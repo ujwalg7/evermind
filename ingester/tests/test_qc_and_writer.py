@@ -34,7 +34,7 @@ def test_qc_rejects_missing_source_url():
 
 def test_writer_serializes_evermind_frontmatter(tmp_path: Path):
   note = CuratedNote(
-    title="AI Research Notes",
+    title="AI Research Notes: Runtime/Memory?",
     status="curated",
     confidence="high",
     temporal_relevance="current",
@@ -48,14 +48,15 @@ def test_writer_serializes_evermind_frontmatter(tmp_path: Path):
   written = write_curation_note(tmp_path, note)
 
   assert written.exists()
+  assert written.name == "AI Research Notes - Runtime - Memory.md"
   markdown = written.read_text(encoding="utf-8")
-  assert "title: \"AI Research Notes\"" in markdown
+  assert "title: \"AI Research Notes: Runtime/Memory?\"" in markdown
   assert "status: curated" in markdown
   assert "source_url: \"https://example.com/research\"" in markdown
   assert "raw_source: \"/inbox/raw/example.md\"" in markdown
   assert "tags:" in markdown
   assert "related: []" in markdown
-  assert "# AI Research Notes" in markdown
+  assert "# AI Research Notes: Runtime/Memory?" in markdown
 
 
 def test_parse_frontmatter_keeps_yaml_lists_and_rich_values():
@@ -99,21 +100,29 @@ def test_parse_frontmatter_handles_alternative_list_indent_styles():
     assert frontmatter["topics"] == ["alpha", "beta"]
 
 
-def test_curate_from_raw_moves_processed_notes_and_survives_missing_source_url(tmp_path: Path):
+def test_curate_from_raw_archives_notes_and_survives_missing_source_url(tmp_path: Path):
     raw_dir = tmp_path / "inbox" / "raw"
     raw_dir.mkdir(parents=True)
-    (raw_dir / "missing-url.md").write_text("---\ntitle: Missing Source\n---\nSome captured article body.\n" * 3,
-                                            encoding="utf-8")
+    (raw_dir / "source.md").write_text(
+        "---\n"
+        "title: Useful Source\n"
+        "source: https://example.com/useful-source\n"
+        "capture_status: complete\n"
+        "---\n"
+        + ("Some captured article body with reusable operational detail.\n" * 12),
+        encoding="utf-8",
+    )
 
     written = curate_from_raw(str(tmp_path), limit=1)
 
     assert len(written) == 1
     assert (tmp_path / "inbox" / "raw").exists()
     assert not any((raw_dir).iterdir()), "raw file should be moved after ingestion"
-    processed = tmp_path / "inbox" / "processed-ok"
-    processed_files = list(processed.glob("*.md"))
-    assert len(processed_files) == 1
-    assert "source_url: \"file://" in written[0].read_text(encoding="utf-8")
+    archived_files = list((tmp_path / "raw").glob("*/*.md"))
+    assert len(archived_files) == 1
+    markdown = written[0].read_text(encoding="utf-8")
+    assert "source_url: \"https://example.com/useful-source\"" in markdown
+    assert "raw_source: \"raw/" in markdown
 
 
 def test_render_curation_note_includes_source_metadata_and_why_it_matters():

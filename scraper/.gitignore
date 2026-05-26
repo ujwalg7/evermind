@@ -1,0 +1,17 @@
+# Dependency directories
+node_modules/
+
+# Build outputs
+dist/
+bin/
+
+# Local configuration & environment keys
+.env
+.env*.local
+
+# OS files
+.DS_Store
+
+# IDE files
+.idea/
+*.iml

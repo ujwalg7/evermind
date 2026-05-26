@@ -17,6 +17,7 @@ export function loadConfig(): Config {
   if (!vaultPath) {
     const homeDir = process.env.HOME || process.env.USERPROFILE || '';
     const potentialPaths = [
+      path.resolve(process.cwd(), '..', 'memory'),
       path.join(homeDir, 'Documents', 'Obsidian Vault'),
       path.join(homeDir, 'Obsidian'),
       path.join(process.cwd(), 'vault')

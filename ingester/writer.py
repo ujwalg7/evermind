@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Iterable, List
 
 from .models import CuratedNote
+from .titles import clean_display_title, note_filename
 
 try:
     import yaml  # type: ignore[import-untyped]
@@ -62,8 +63,9 @@ def _to_yaml_list(values: Iterable[str], prefix: str = "") -> str:
 
 
 def render_curation_note(note: CuratedNote) -> str:
+  display_title = clean_display_title(note.title)
   lines = ["---"]
-  lines.append(f'title: "{note.title}"')
+  lines.append(f'title: "{display_title}"')
   lines.append(f"status: {note.status}")
   lines.append(f"format: {note.format}")
   lines.append(f"confidence: {note.confidence}")
@@ -108,20 +110,12 @@ def render_curation_note(note: CuratedNote) -> str:
       _append_yaml_lines(lines, f"source_{key}", value)
   lines.append("---")
   lines.append("")
-  lines.append(f"# {note.title}")
+  lines.append(f"# {display_title}")
   lines.append("")
   if note.source_content:
     lines.append(note.source_content)
 
   return "\n".join(lines).rstrip() + "\n"
-
-
-def _slugify(value: str) -> str:
-  value = value.lower().replace(" ", "-")
-  return "".join(
-    ch if ch.isalnum() or ch in "-_" else "-"
-    for ch in value
-  ).strip("-")
 
 
 def write_curation_note(vault_path: Path, note: CuratedNote) -> Path:
@@ -136,8 +130,7 @@ def write_curation_note(vault_path: Path, note: CuratedNote) -> Path:
   target_dir = vault_path / bucket / date_key
   target_dir.mkdir(parents=True, exist_ok=True)
 
-  slug = _slugify(note.title) or "ingested-note"
-  out_path = target_dir / f"{slug}.md"
+  out_path = target_dir / f"{note_filename(note.title) or 'Ingested Note'}.md"
   out_path = _ensure_unique_path(out_path)
   out_path.write_text(render_curation_note(note), encoding="utf-8")
   return out_path

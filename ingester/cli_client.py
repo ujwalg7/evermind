@@ -22,15 +22,16 @@ class EvermindCliClient:
       return configured
 
     repo_root = Path(__file__).resolve().parents[1]
-    bin_cli = repo_root / "bin/evermind"
+    scraper_root = repo_root / "scraper"
+    bin_cli = scraper_root / "bin/evermind"
     if bin_cli.exists():
       return str(bin_cli)
 
-    dist_cli = repo_root / "dist" / "src" / "cli.js"
+    dist_cli = scraper_root / "dist" / "src" / "cli.js"
     if dist_cli.exists():
       return f"node {dist_cli}"
 
-    fallback = repo_root / "bin" / "evermind"
+    fallback = scraper_root / "bin" / "evermind"
     return str(fallback)
 
   def _normalize_command(self) -> list[str]:

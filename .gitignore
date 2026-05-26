@@ -1,17 +1,17 @@
-# Dependency directories
-node_modules/
+memory/
 
-# Build outputs
-dist/
-bin/
-
-# Local configuration & environment keys
 .env
-.env*.local
+.env.*
+!.env.example
 
-# OS files
+**/node_modules/
+**/dist/
+**/bin/
+**/.pytest_cache/
+**/__pycache__/
+**/*.pyc
+**/attachments/
+
 .DS_Store
-
-# IDE files
 .idea/
 *.iml
