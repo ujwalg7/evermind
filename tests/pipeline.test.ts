@@ -2,11 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { parseHtml, extractTier4, parseMarkdownMetadata, extractTier5 } from '../src/extractor';
+import { parseHtml, extractTier4, parseMarkdownMetadata, extractTier5, runExtractionPipeline } from '../src/extractor';
 import { formatNoteMarkdown } from '../src/vault';
 import { localizeImages } from '../src/images';
 import { CanonicalNote } from '../src/types';
 import axios from 'axios';
+import { chromium } from 'playwright';
 
 describe('Article-to-Obsidian Pipeline Tests', () => {
   const fixturesDir = path.join(__dirname, 'fixtures');
@@ -222,5 +223,62 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
       // Restore original post
       axios.post = originalPost;
     }
+  });
+
+  // Test 8: Fallback Escalation to Tier 3
+  it('should escalate to Tier 3 when Tier 2 confidence is below threshold', async () => {
+    const originalGet = axios.get;
+    const originalLaunch = chromium.launch;
+
+    // Tier 2 returns low confidence HTML (very short content)
+    axios.get = (async (): Promise<any> => {
+      return {
+        data: `<html><head><title>Short Article</title></head><body><p>Too short</p></body></html>`
+      };
+    }) as any;
+
+    // Tier 3 is mocked to return high confidence HTML via Playwright mock
+    chromium.launch = (async (): Promise<any> => {
+      const longText = 'This is a long test paragraph that will repeat multiple times to satisfy the readability and word count requirements of the confidence score checker. '.repeat(40);
+      return {
+        newContext: async () => ({
+          newPage: async () => ({
+            goto: async () => {},
+            waitForTimeout: async () => {},
+            content: async () => `<html><head><title>Mock Tier 3 High Confidence</title></head><body><p>${longText}</p></body></html>`
+          })
+        }),
+        close: async () => {}
+      };
+    }) as any;
+
+    try {
+      const config = {
+        vaultPath: '/mock/vault',
+        inboxSubdir: 'inbox',
+        attachmentsSubdir: 'attachments',
+        fallbackThreshold: 0.6
+      };
+      
+      const { note, tierUsed } = await runExtractionPipeline('https://example.com/escalate', config);
+      
+      assert.strictEqual(tierUsed, 3);
+      assert.strictEqual(note.title, 'Mock Tier 3 High Confidence');
+      assert.ok(note.confidenceScore >= 0.6);
+      assert.strictEqual(note.captureStatus, 'complete');
+    } finally {
+      axios.get = originalGet;
+      chromium.launch = originalLaunch;
+    }
+  });
+
+  // Test 9: Metadata & Fingerprint Stability
+  it('should generate identical fingerprints for identical content on multiple runs', () => {
+    const html = `<html><head><title>Stable Article</title></head><body><p>This is stable content body.</p></body></html>`;
+    const note1 = parseHtml(html, 'https://example.com/stable');
+    const note2 = parseHtml(html, 'https://example.com/stable');
+    
+    assert.strictEqual(note1.fingerprint, note2.fingerprint);
+    assert.ok(note1.fingerprint.length > 0);
   });
 });
