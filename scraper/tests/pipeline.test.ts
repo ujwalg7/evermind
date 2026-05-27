@@ -118,6 +118,7 @@ describe('Article-to-Obsidian Pipeline Tests', () => {
     try {
       const written = await writeNoteToVault(mockNote, vaultPath);
       assert.strictEqual(path.basename(written), "'The terminal still matters' - Amp & CLI.md");
+      assert.match(path.dirname(written).replace(/\\/g, '/'), /inbox\/raw\/\d{4}\/\d{2}\/\d{2}$/);
       const markdown = fs.readFileSync(written, 'utf8');
       assert.ok(markdown.includes('title: "\'The terminal still matters\': Amp & CLI?"'));
       assert.ok(markdown.includes("# 'The terminal still matters': Amp & CLI?"));

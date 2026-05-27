@@ -6,12 +6,12 @@ Evermind is a local article capture and memory-curation workspace. Git tracks th
 
 - `scraper/`: Node CLI for article extraction, clipping, image localization, and packaging.
 - `ingester/`: Python curation pipeline for raw capture QC and curated-note generation.
-- `memory/`: Git-ignored Obsidian vault with raw captures, archived sources, curated notes, needs-review notes, tags, and attachments.
+- `evermind/`: Git-ignored Obsidian vault with raw captures, curated notes, needs-review notes, tags, and attachments.
 
 ## Runtime Config
 
 ```bash
-export OBSIDIAN_VAULT_PATH="/Users/ujwalgattupalli/Dev/evermind/memory"
+export OBSIDIAN_VAULT_PATH="/Users/ujwalgattupalli/Dev/evermind/evermind"
 export EVERMIND_INBOX_SUBDIR="inbox/raw"
 export EVERMIND_ATTACHMENTS_SUBDIR="attachments/evermind"
 export EVERMIND_CLI_PATH="/Users/ujwalgattupalli/Dev/evermind/scraper/bin/evermind"
@@ -37,7 +37,7 @@ python3 -m pip install -r ingester/requirements.txt
 python3 -m ingester curate --vault "$OBSIDIAN_VAULT_PATH" --limit 10
 ```
 
-Accepted raw sources archive to `memory/raw/YYYY-MM-DD/`. Curated output goes to `memory/curated/YYYY-MM-DD/`. Borderline output goes to `memory/needs-review/YYYY-MM-DD/`.
+Raw captures are stored under `evermind/inbox/raw/YYYY/MM/DD/`. Curated output goes to `evermind/curated/YYYY-MM-DD/`. Borderline output goes to `evermind/needs-review/YYYY-MM-DD/`.
 
 ## Verification
 

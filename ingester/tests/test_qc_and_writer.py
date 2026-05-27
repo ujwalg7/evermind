@@ -117,12 +117,12 @@ def test_curate_from_raw_archives_notes_and_survives_missing_source_url(tmp_path
 
     assert len(written) == 1
     assert (tmp_path / "inbox" / "raw").exists()
-    assert not any((raw_dir).iterdir()), "raw file should be moved after ingestion"
-    archived_files = list((tmp_path / "raw").glob("*/*.md"))
+    archived_files = list((tmp_path / "inbox" / "raw").glob("*/*/*/*.md"))
     assert len(archived_files) == 1
+    assert archived_files[0].relative_to(tmp_path).as_posix().startswith("inbox/raw/")
     markdown = written[0].read_text(encoding="utf-8")
     assert "source_url: \"https://example.com/useful-source\"" in markdown
-    assert "raw_source: \"raw/" in markdown
+    assert "raw_source: \"inbox/raw/" in markdown
 
 
 def test_render_curation_note_includes_source_metadata_and_why_it_matters():

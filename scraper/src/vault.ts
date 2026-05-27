@@ -89,6 +89,18 @@ function validateCaptureForWrite(note: CanonicalNote & { synthesis?: any }): voi
   }
 }
 
+function datePartitionedSubdir(baseSubdir: string, now = new Date()): string {
+  const normalized = baseSubdir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') || 'inbox/raw';
+  if (/\d{4}\/\d{2}\/\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return path.posix.join(normalized, year, month, day);
+}
+
 /**
  * Helper to parse YAML frontmatter and Markdown content from a note file
  */
@@ -198,7 +210,7 @@ export function formatNoteMarkdown(note: CanonicalNote & { synthesis?: any }): s
 }
 
 /**
- * Writes a note to the Obsidian vault's inbox/raw directory
+ * Writes a note to the Obsidian vault's inbox/raw/YYYY/MM/DD partition.
  */
 export async function writeNoteToVault(
   note: CanonicalNote & { synthesis?: any },
@@ -207,7 +219,7 @@ export async function writeNoteToVault(
 ): Promise<string> {
   validateCaptureForWrite(note);
 
-  const targetDir = path.join(vaultPath, inboxSubdir);
+  const targetDir = path.join(vaultPath, datePartitionedSubdir(inboxSubdir));
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }

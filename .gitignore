@@ -1,4 +1,6 @@
+evermind/
 memory/
+.obsidian/
 
 .env
 .env.*

@@ -136,4 +136,4 @@ def read_raw_capture(path: Path) -> RawCapture:
 def discover_raw_notes(raw_dir: Path):
   if not raw_dir.exists():
     return []
-  return sorted(raw_dir.glob("*.md"))
+  return sorted(raw_dir.rglob("*.md"))

@@ -4,13 +4,13 @@ import datetime as _dt
 import logging
 from pathlib import Path
 from shutil import move
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from .cli_client import EvermindCliClient
 from .llm import summarize_note_content
 from .models import CuratedNote, QCDecision, RawCapture
 from .qc import classify_capture_quality
-from .reader import discover_raw_notes, read_raw_capture
+from .reader import discover_raw_notes, parse_frontmatter_and_body, read_raw_capture
 from .titles import note_filename
 from .writer import write_curation_note
 
@@ -24,17 +24,28 @@ def _safe_note_source_url(path: Path, raw_url: str) -> str:
     return f"file://{path}"
 
 
-def _archive_target(vault_dir: Path, note: CuratedNote, raw_path: Path, failed: bool = False) -> Path:
-    date_key = note.reviewed_at.split("T")[0]
+def _date_partition(iso_timestamp: str) -> Path:
+    date_key = iso_timestamp.split("T")[0]
+    year, month, day = date_key.split("-")
+    return Path(year) / month / day
+
+
+def _archive_target(
+    vault_dir: Path,
+    raw_subdir: str,
+    note: CuratedNote,
+    raw_path: Path,
+    failed: bool = False
+) -> Path:
     if note.status == "curated" and not failed:
-        bucket = "raw"
+        bucket = Path(raw_subdir)
         title = note.title
     else:
-        bucket = "needs-review"
+        bucket = Path("needs-review")
         suffix = "Ingest Failed" if failed else "Source"
         title = f"{note.title} - {suffix}"
 
-    target_dir = vault_dir / bucket / date_key
+    target_dir = vault_dir / bucket / _date_partition(note.reviewed_at)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     filename = note_filename(title) or raw_path.stem
@@ -49,8 +60,24 @@ def _archive_target(vault_dir: Path, note: CuratedNote, raw_path: Path, failed: 
 
 
 def _archive_raw(raw_path: Path, target: Path) -> None:
+    if raw_path.resolve() == target.resolve():
+        return
     target.parent.mkdir(parents=True, exist_ok=True)
     move(str(raw_path), str(target))
+
+
+def _known_raw_sources(vault_dir: Path) -> Set[str]:
+    known: Set[str] = set()
+    for bucket in ("curated", "needs-review", "rejected"):
+        base = vault_dir / bucket
+        if not base.exists():
+            continue
+        for note_path in base.rglob("*.md"):
+            frontmatter, _ = parse_frontmatter_and_body(note_path.read_text(encoding="utf-8"))
+            raw_source = str(frontmatter.get("raw_source") or "").strip()
+            if raw_source:
+                known.add(raw_source)
+    return known
 
 
 def _safe_text(value: Optional[str], fallback: str) -> str:
@@ -70,6 +97,11 @@ def curate_from_raw(
   raw_dir = vault_dir / raw_subdir
 
   raw_paths = discover_raw_notes(raw_dir)
+  known_raw_sources = _known_raw_sources(vault_dir)
+  raw_paths = [
+      path for path in raw_paths
+      if path.relative_to(vault_dir).as_posix() not in known_raw_sources
+  ]
   if limit is not None:
     raw_paths = raw_paths[:limit]
 
@@ -99,7 +131,7 @@ def curate_from_raw(
           )
 
           note = _to_curated_note(raw, qc, captured_text, path)
-          archive_path = _archive_target(vault_dir, note, path)
+          archive_path = _archive_target(vault_dir, raw_subdir, note, path)
           note.raw_source = archive_path.relative_to(vault_dir).as_posix()
           if synthesis:
               enrichments = summarize_note_content(note)
@@ -126,7 +158,7 @@ def curate_from_raw(
               captured_at=now,
               reviewed_at=now,
           )
-          _archive_raw(path, _archive_target(vault_dir, fallback_note, path, failed=True))
+          _archive_raw(path, _archive_target(vault_dir, raw_subdir, fallback_note, path, failed=True))
           log.warning("Failed to ingest %s: %s", path, exc)
 
   return written_paths

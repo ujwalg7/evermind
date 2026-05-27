@@ -12,7 +12,7 @@ npm install
 ## Runtime Config
 
 ```bash
-export OBSIDIAN_VAULT_PATH="/Users/ujwalgattupalli/Dev/evermind/memory"
+export OBSIDIAN_VAULT_PATH="/Users/ujwalgattupalli/Dev/evermind/evermind"
 export EVERMIND_INBOX_SUBDIR="inbox/raw"
 export EVERMIND_ATTACHMENTS_SUBDIR="attachments/evermind"
 export EXA_API_KEY="your-exa-api-key"

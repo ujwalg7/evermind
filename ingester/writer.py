@@ -13,6 +13,11 @@ except Exception:  # pragma: no cover - fallback if PyYAML missing
 
 
 def _append_yaml_lines(lines: List[str], key: str, value: Any) -> None:
+    if isinstance(value, str):
+        safe_value = value.replace('"', '\\"')
+        lines.append(f'{key}: "{safe_value}"')
+        return
+
     if yaml is None:
         if isinstance(value, list):
             lines.append(f"{key}:")

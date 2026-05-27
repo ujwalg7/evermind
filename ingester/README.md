@@ -9,7 +9,7 @@ cd /Users/ujwalgattupalli/Dev/evermind
 python3 -m ingester curate --vault "$OBSIDIAN_VAULT_PATH" --limit 10
 ```
 
-Accepted sources archive to `raw/YYYY-MM-DD/`. Curated notes write to `curated/YYYY-MM-DD/`. Borderline output writes to `needs-review/YYYY-MM-DD/`.
+Raw sources live under `inbox/raw/YYYY/MM/DD/`. Curated notes write to `curated/YYYY-MM-DD/`. Borderline output writes to `needs-review/YYYY-MM-DD/`.
 
 ## Setup
 
